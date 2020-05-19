@@ -9,7 +9,6 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"path"
@@ -19,16 +18,35 @@ import (
 	"strings"
 
 	"github.com/juju/ansiterm"
+	"github.com/urfave/cli/v2"
 	"golang.org/x/tools/cover"
 )
 
 func main() {
-	if err := run(os.Args[1]); err != nil {
-		log.Fatal(err)
+	app := cli.App{
+		Description: "Nice coverage output",
+		Flags: []cli.Flag{
+			&cli.BoolFlag{
+				Name:    "reverse",
+				Aliases: []string{"r"},
+			},
+		},
+		Action: func(c *cli.Context) error {
+			reverse := c.Bool("reverse")
+			file := c.Args().First()
+			if file == "" {
+				return errors.New("please provide a coverage file")
+			}
+			return run(file, reverse)
+		},
+	}
+
+	if err := app.Run(os.Args); err != nil {
+		fmt.Printf("Error: %s\n", err)
 	}
 }
 
-func run(file string) error {
+func run(file string, reverse bool) error {
 	tabber := ansiterm.NewTabWriter(os.Stdout, 1, 8, 1, '\t', 0)
 	defer tabber.Flush()
 
@@ -69,36 +87,37 @@ func run(file string) error {
 		})
 	}
 	sort.Slice(coverfiles, func(i, j int) bool {
+		if reverse {
+			return coverfiles[i].percent >= coverfiles[j].percent
+		}
 		return coverfiles[i].percent < coverfiles[j].percent
 	})
 
 	for _, coverfile := range coverfiles {
-		if coverfile.percent <= 30 {
-			tabber.SetForeground(ansiterm.Red)
-		}
-		if coverfile.percent > 30 && coverfile.percent <= 70 {
-			tabber.SetForeground(ansiterm.Yellow)
-		}
-		if coverfile.percent > 70 {
-			tabber.SetForeground(ansiterm.Green)
-		}
+		tabber.SetForeground(getColor(coverfile.percent))
 		fmt.Fprintf(tabber, "%s\t%.1f%%\n", coverfile.filename, coverfile.percent)
 	}
 
 	fmt.Fprintf(tabber, "\t\t\n")
 	totalPercent := 100.0 * float64(covered) / float64(total)
-	if totalPercent <= 30 {
-		tabber.SetForeground(ansiterm.Red)
-	}
-	if totalPercent > 30 && totalPercent <= 70 {
-		tabber.SetForeground(ansiterm.Yellow)
-	}
-	if totalPercent > 70 {
-		tabber.SetForeground(ansiterm.Green)
-	}
-	fmt.Fprintf(tabber, "Total:\t%.1f%%\n", 100.0*float64(covered)/float64(total))
+	tabber.SetForeground(getColor(totalPercent))
+	fmt.Fprintf(tabber, "Total:\t%.1f%%\n", totalPercent)
 
 	return nil
+}
+
+func getColor(percent float64) ansiterm.Color {
+	if percent <= 30 {
+		return ansiterm.Red
+	}
+	if percent > 30 && percent <= 70 {
+		return ansiterm.Yellow
+	}
+	if percent > 70 {
+		return ansiterm.Green
+	}
+
+	return ansiterm.Default
 }
 
 type coveredFile struct {
